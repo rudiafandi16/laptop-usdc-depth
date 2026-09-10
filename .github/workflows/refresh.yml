@@ -20,7 +20,7 @@ env:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
 
@@ -30,16 +30,18 @@ jobs:
 
       - name: Build depth CSV (retries on RPC flakiness)
         run: |
+          go build -o pooldepth .
           for attempt in 1 2 3; do
-            if go run . -rpc "$RPC" -pool "$POOL" -quote "$QUOTE" -start "$START" \
-                        -linear-ts -interval "$INTERVAL" -out "$OUT" 2> run.log; then
-              break
-            fi
-            echo "attempt $attempt failed:"; tail -5 run.log
+            rm -f "$OUT"
+            # progress streams to the job log (every 10th getLogs chunk) so a slow run stays visible
+            ./pooldepth -rpc "$RPC" -pool "$POOL" -quote "$QUOTE" -start "$START" \
+                        -linear-ts -interval "$INTERVAL" -out "$OUT" 2>&1 \
+              | awk '!/getLogs/ || (++n % 10 == 0)'
+            if [ -s "$OUT" ]; then break; fi
+            echo "attempt $attempt failed"
             [ "$attempt" = 3 ] && exit 1
             sleep 60
           done
-          grep -vE "getLogs 0x" run.log
           wc -l "$OUT"
 
       - name: Upload to Dune (replaces the table)
@@ -53,4 +55,5 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add "$OUT"
           git diff --cached --quiet || git commit -m "data: refresh $OUT ($(date -u +%Y-%m-%dT%H:%MZ))"
+          git pull --rebase --quiet
           git push

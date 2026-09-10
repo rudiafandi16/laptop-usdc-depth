@@ -100,6 +100,11 @@ func (c *rpcClient) post(body interface{}) ([]byte, error) {
 				return out, nil
 			}
 			lastErr = fmt.Errorf("http %d: %s", resp.StatusCode, string(out))
+			// 4xx other than 429/408 will not get better on retry (e.g. 413 "payload too large"
+			// on a wide getLogs range) — return now so the caller can bisect immediately
+			if resp.StatusCode >= 400 && resp.StatusCode < 500 && resp.StatusCode != 429 && resp.StatusCode != 408 {
+				return nil, lastErr
+			}
 		} else {
 			lastErr = err
 		}
@@ -238,16 +243,45 @@ func (c *rpcClient) ethCall(to, data string) string {
 	return s
 }
 
-// getLogs over [from,to] with a single topic0, splitting the range on provider errors
-func (c *rpcClient) getLogs(addr string, topic0 string, from, to, step uint64) []ethLog {
-	var all []ethLog
+// getLogs over [from,to] for any of the given topic0s (one request per chunk, OR-filtered),
+// splitting the range on provider errors
+func (c *rpcClient) getLogs(addr string, topic0s []string, from, to, step uint64, workers int) []ethLog {
+	type chunk struct{ from, to uint64 }
+	var chunks []chunk
 	for f := from; f <= to; f += step {
 		t := f + step - 1
 		if t > to {
 			t = to
 		}
-		all = append(all, c.getLogsRange(addr, topic0, f, t)...)
-		log.Printf("getLogs %s %d..%d: %d logs so far", topic0[:10], f, t, len(all))
+		chunks = append(chunks, chunk{f, t})
+	}
+	results := make([][]ethLog, len(chunks))
+	idx := make(chan int)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	done, total := 0, 0
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range idx {
+				results[i] = c.getLogsRange(addr, topic0s, chunks[i].from, chunks[i].to)
+				mu.Lock()
+				done++
+				total += len(results[i])
+				log.Printf("getLogs chunk %d/%d (%d..%d): %d logs so far", done, len(chunks), chunks[i].from, chunks[i].to, total)
+				mu.Unlock()
+			}
+		}()
+	}
+	for i := range chunks {
+		idx <- i
+	}
+	close(idx)
+	wg.Wait()
+	var all []ethLog // chunk order is preserved; swaps are re-sorted by (block, logIndex) later anyway
+	for _, r := range results {
+		all = append(all, r...)
 	}
 	return all
 }
@@ -263,13 +297,13 @@ func isRateLimit(err error) bool {
 	return false
 }
 
-func (c *rpcClient) getLogsRange(addr, topic0 string, from, to uint64) []ethLog {
+func (c *rpcClient) getLogsRange(addr string, topic0s []string, from, to uint64) []ethLog {
 	var r json.RawMessage
 	var err error
 	for attempt := 0; attempt < 10; attempt++ {
 		r, err = c.call("eth_getLogs", map[string]interface{}{
 			"address":   addr,
-			"topics":    []interface{}{topic0},
+			"topics":    []interface{}{topic0s},
 			"fromBlock": fmt.Sprintf("0x%x", from),
 			"toBlock":   fmt.Sprintf("0x%x", to),
 		})
@@ -285,7 +319,7 @@ func (c *rpcClient) getLogsRange(addr, topic0 string, from, to uint64) []ethLog 
 		}
 		// most providers error on "too many results" — bisect
 		mid := (from + to) / 2
-		return append(c.getLogsRange(addr, topic0, from, mid), c.getLogsRange(addr, topic0, mid+1, to)...)
+		return append(c.getLogsRange(addr, topic0s, from, mid), c.getLogsRange(addr, topic0s, mid+1, to)...)
 	}
 	var logs []ethLog
 	if err := json.Unmarshal(r, &logs); err != nil {
@@ -389,8 +423,8 @@ func main() {
 	quoteSlot := flag.String("quote", "token1", "slot holding the USD token: token0 | token1")
 	startStr := flag.String("start", "2026-05-01", "start date (UTC), inclusive")
 	endBlockFlag := flag.Uint64("end-block", 0, "end block (0 = latest)")
-	step := flag.Uint64("step", 10000, "eth_getLogs block range per request")
-	workers := flag.Int("workers", 8, "concurrent header fetchers")
+	step := flag.Uint64("step", 2000, "eth_getLogs block range per request (public Base RPC caps at 2000)")
+	workers := flag.Int("workers", 4, "concurrent getLogs / header fetchers (public Base RPC: keep ≤4)")
 	batchSize := flag.Int("batch", 100, "eth_getBlockByNumber calls per JSON-RPC batch (public Base RPC allows 10)")
 	linearTS := flag.Bool("linear-ts", false, "derive timestamps as ts(first)+2s*(n-first) (Base/OP-stack fixed 2s blocks); verified against the last block")
 	interval := flag.Int("interval", 60, "bucket size in minutes (60 = hourly like the Dune query)")
@@ -429,9 +463,17 @@ func main() {
 	log.Printf("blocks %d..%d", fromBlock, toBlock)
 
 	// --- logs
-	swapLogs := rpc.getLogs(poolAddr, topicSwap, fromBlock, toBlock, *step)
-	mintLogs := rpc.getLogs(poolAddr, topicMint, fromBlock, toBlock, *step)
-	burnLogs := rpc.getLogs(poolAddr, topicBurn, fromBlock, toBlock, *step)
+	var swapLogs, mintLogs, burnLogs []ethLog
+	for _, l := range rpc.getLogs(poolAddr, []string{topicSwap, topicMint, topicBurn}, fromBlock, toBlock, *step, *workers) {
+		switch l.Topics[0] {
+		case topicSwap:
+			swapLogs = append(swapLogs, l)
+		case topicMint:
+			mintLogs = append(mintLogs, l)
+		case topicBurn:
+			burnLogs = append(burnLogs, l)
+		}
+	}
 	log.Printf("logs: %d swaps, %d mints, %d burns", len(swapLogs), len(mintLogs), len(burnLogs))
 
 	// --- timestamps for every block touched

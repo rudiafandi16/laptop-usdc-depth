@@ -67,6 +67,8 @@ Pools seen so far: 0x0aed…76a9 was deployed 2026-05-07 (block 45665723), so `-
 captures its full life. CP-USDC 0x78fa…5e8e first swapped 2026-09-02 14:00 UTC (block 50784937).
 ALIGN-USDC 0x0f56aeba06f65e2790c5b6687f5c3128b7456f76 (USDC = token1, tick spacing 100) was deployed
 2026-08-18 15:42 UTC (block 50139213); use `-start 2026-08-18`.
+LAPTOP-USDC 0x99cf3e8bfb02c300312c53aac5d0b082e3d5975c (**USDC = token0**, tick spacing 200) was
+deployed 2026-09-08 20:39 UTC (block 51055321); use `-quote token0 -start 2026-09-08`.
 
 ## Pipeline (mirrors the SQL CTEs)
 

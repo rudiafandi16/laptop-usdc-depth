@@ -1,20 +1,20 @@
-name: Refresh ALIGN-USDC depth
+name: Refresh LAPTOP-USDC depth
 
 on:
   schedule:
-    - cron: "30 0 * * *"   # daily 00:30 UTC
+    - cron: "30 1 * * *"   # daily 01:30 UTC
   workflow_dispatch:        # manual "Run workflow" button
 
 permissions:
   contents: write           # to commit the refreshed CSV back to the repo
 
 env:
-  POOL: "0x0f56aeba06f65e2790c5b6687f5c3128b7456f76"
-  QUOTE: token1
-  START: "2026-08-18"
+  POOL: "0x99cf3e8bfb02c300312c53aac5d0b082e3d5975c"
+  QUOTE: token0
+  START: "2026-09-08"
   INTERVAL: "15"
-  OUT: depth_align_usdc_15m.csv
-  DUNE_TABLE: align_usdc_depth_15m
+  OUT: depth_laptop_usdc_15m.csv
+  DUNE_TABLE: laptop_usdc_depth_15m
   RPC: https://mainnet.base.org
 
 jobs:
@@ -45,7 +45,7 @@ jobs:
       - name: Upload to Dune (replaces the table)
         env:
           DUNE_API_KEY: ${{ secrets.DUNE_API_KEY }}
-        run: python3 upload_dune.py "$OUT" "$DUNE_TABLE" "ALIGN-USDC 15m pool depth (auto-refreshed)"
+        run: python3 upload_dune.py "$OUT" "$DUNE_TABLE" "LAPTOP-USDC 15m pool depth (auto-refreshed)"
 
       - name: Commit refreshed CSV
         run: |

@@ -116,3 +116,20 @@ Semantics preserved from the SQL (with `-interval`, read "hour" as "bucket" — 
 - Don't change the float64 math order in the hourly/band loops without re-comparing against Dune —
   it's deliberately the same expression order as the SQL.
 - Timestamps are UTC throughout; output `hour` is `YYYY-MM-DD HH:MM:SS` UTC.
+
+## Incremental mode + filter logs (2026-10-10)
+
+Since ~2026-10-09 mainnet.base.org answers every `eth_getLogs` with 429 / -32011 "request limit
+reached" (CI hung until the 2h timeout). It still serves `eth_newFilter` → `eth_getFilterLogs` →
+`eth_uninstallFilter`, which returns the identical log set — `-filter-logs` uses that. This is a
+loophole Coinbase may close; the paid PAYG RPC is the planned permanent fix (set `RPC`).
+
+`-state DIR` (see `state.go`) makes runs incremental: `state.json` checkpoint (`next_block` /
+`next_bucket` = start of the last, possibly open bucket), `liq_snapshot.csv` (liqNet per tick folded
+up to the checkpoint, exact float round-trip) and `liq_events.csv` (mint/burns after it). Finished
+rows come verbatim from the previous `-out` CSV. Verified on LAPTOP-USDC: seed + incremental output is
+byte-identical to a full scan at the same end block (same CPU arch; arm64 vs amd64 differ in the last
+float digit because Go fuses multiply-adds on arm64). Delete the state folder to force a full rescan.
+
+Persistent 429s now fail fast (`log.Fatal`) instead of bisecting; archive/pruned errors too.
+`-start` also accepts `YYYY-MM-DDTHH:MM`.

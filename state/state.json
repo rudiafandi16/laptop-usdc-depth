@@ -3,8 +3,8 @@
   "quote": "token0",
   "start": "2026-09-08",
   "interval": 15,
-  "next_block": 52843327,
-  "next_bucket": 1792476000,
-  "scanned_to": 52843737,
-  "updated_at": "2026-10-20T06:13:46Z"
+  "next_block": 52886527,
+  "next_bucket": 1792562400,
+  "scanned_to": 52886885,
+  "updated_at": "2026-10-21T06:12:01Z"
 }
